@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>ADVoost 옥외 매체 지도</title>
+
+  <!--
+    ========================================================================
+    [중요] 아래 YOUR_NCP_KEY_ID_HERE 부분을 NCP에서 발급받은 ncpKeyId로 교체하세요.
+    그리고 NCP 콘솔에서 이 페이지가 올라갈 도메인(예: https://아이디.github.io)을
+    서비스 URL(Web 서비스 URL)로 반드시 등록해야 지도가 정상 표시됩니다.
+    ========================================================================
+  -->
+  <script type="text/javascript"
+    src="https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=YOUR_NCP_KEY_ID_HERE"></script>
+
+  <style>
+    :root {
+      --bg: #ffffff;
+      --panel: #f7f7f9;
+      --ink: #1d1d1f;
+      --muted: #6b6b70;
+      --line: #e6e6ea;
+      --brand: #6c3df4;        /* 보라색 (PPT 쐐기 색) */
+      --brand-soft: rgba(108, 61, 244, 0.20);
+      --brand-line: rgba(108, 61, 244, 0.85);
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font-family: "Apple SD Gothic Neo", "Malgun Gothic", Arial, sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+      display: flex;
+      flex-direction: row;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* 좌측 목록 패널 */
+    #panel {
+      width: 320px;
+      flex: 0 0 320px;
+      background: var(--panel);
+      border-right: 1px solid var(--line);
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+    #panel header {
+      padding: 18px 18px 12px;
+      border-bottom: 1px solid var(--line);
+    }
+    #panel header h1 { margin: 0; font-size: 17px; font-weight: 800; }
+    #panel header p { margin: 4px 0 0; font-size: 12px; color: var(--muted); }
+    #list { overflow-y: auto; flex: 1; padding: 8px; }
+    .item {
+      padding: 11px 12px;
+      border-radius: 10px;
+      cursor: pointer;
+      border: 1px solid transparent;
+      margin-bottom: 4px;
+    }
+    .item:hover { background: #fff; border-color: var(--line); }
+    .item.active { background: #fff; border-color: var(--brand); }
+    .item .name { font-size: 14px; font-weight: 700; }
+    .item .desc { font-size: 12px; color: var(--muted); margin-top: 2px; line-height: 1.4; }
+
+    /* 지도 */
+    #map { flex: 1; height: 100%; }
+
+    /* 인포윈도우 */
+    .iw {
+      padding: 10px 12px;
+      max-width: 240px;
+      font-family: inherit;
+    }
+    .iw .t { font-size: 14px; font-weight: 800; margin-bottom: 3px; }
+    .iw .d { font-size: 12px; color: #444; line-height: 1.45; }
+    .iw .dir { font-size: 11px; color: var(--brand); margin-top: 6px; font-weight: 700; }
+
+    /* 모바일: 위 지도 / 아래 목록 */
+    @media (max-width: 720px) {
+      body { flex-direction: column; }
+      #map { order: 1; height: 58vh; flex: none; width: 100%; }
+      #panel { order: 2; width: 100%; flex: 1; border-right: none; border-top: 1px solid var(--line); }
+      #panel header { padding: 12px 14px 8px; }
+    }
+
+    /* 인증 실패 안내 */
+    #authError {
+      position: fixed; inset: 0; display: none;
+      align-items: center; justify-content: center;
+      background: rgba(255,255,255,0.96); z-index: 9999; padding: 24px;
+      text-align: center;
+    }
+    #authError .box { max-width: 420px; }
+    #authError h2 { font-size: 18px; margin: 0 0 10px; }
+    #authError p { font-size: 14px; color: var(--muted); line-height: 1.6; }
+    code { background: #f0f0f3; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <aside id="panel">
+    <header>
+      <h1>ADVoost 옥외 매체</h1>
+      <p>핀을 누르면 화면이 바라보는 방향(보라색 부채꼴)을 볼 수 있어요.</p>
+    </header>
+    <div id="list"></div>
+  </aside>
+
+  <div id="map"></div>
+
+  <div id="authError">
+    <div class="box">
+      <h2>지도 인증에 실패했어요</h2>
+      <p>
+        스크립트의 <code>ncpKeyId</code> 값과, NCP 콘솔에 등록한
+        <strong>서비스 URL(도메인)</strong>이 현재 페이지 주소와 일치하는지 확인해 주세요.
+      </p>
+    </div>
+  </div>
+
+  <script>
+    /* =========================================================================
+       매체 데이터
+       - lat/lng: 위치(설명 기준 추정 좌표, 실제와 약간 다를 수 있음)
+       - bearing: 화면이 바라보는 방향 (0=북, 90=동, 180=남, 270=서)
+       - spread:  부채꼴 반각(도). 시야 폭. 기본 22도.
+       PPT 슬라이드의 보라색 쐐기를 보고 추정한 값입니다 → 함께 보정하면 됩니다.
+       ========================================================================= */
+    var SCREENS = [
+      { name: "귀뚜라미 본사",        desc: "공항대로 · 강서구청 인근",            lat: 37.5505, lng: 126.8500, bearing: 180 },
+      { name: "다보빌딩",            desc: "양재역 사거리",                    lat: 37.4843, lng: 127.0342, bearing: 315 },
+      { name: "DDP 와이드 비전",      desc: "동대문역사문화공원역 · 광희동 사거리",   lat: 37.5663, lng: 127.0090, bearing: 300 },
+      { name: "명동 신한은행 빌딩",     desc: "명동길–명동중앙로 교차로",            lat: 37.5638, lng: 126.9818, bearing: 355 },
+      { name: "서초퍼스트사이니지",     desc: "서초구 · 사당역 사거리 인근",          lat: 37.4768, lng: 126.9810, bearing: 260 },
+      { name: "을지로 ME & MN LIVE ①", desc: "을지로입구역 사거리 (화면 A)",        lat: 37.5661, lng: 126.9827, bearing: 315 },
+      { name: "을지로 ME & MN LIVE ②", desc: "을지로입구역 사거리 (화면 B)",        lat: 37.5659, lng: 126.9827, bearing: 170 },
+      { name: "신라스테이 삼성",       desc: "삼성역 사거리",                    lat: 37.5089, lng: 127.0631, bearing: 350 },
+      { name: "테헤란로 GV-LIVE",     desc: "포스코 사거리",                    lat: 37.5073, lng: 127.0558, bearing: 60 },
+      { name: "종각 J-LIVE",         desc: "종각역 사거리",                    lat: 37.5703, lng: 126.9829, bearing: 95 },
+      { name: "낙원빌딩",            desc: "종로3가역 · 흥인지문 방면",           lat: 37.5704, lng: 126.9912, bearing: 95 },
+      { name: "정도빌딩",            desc: "남부순환로 신림역 인근 · 사당역 방향",   lat: 37.4843, lng: 126.9300, bearing: 85 },
+      { name: "우남빌딩",            desc: "서울대입구역 · 관악로/남부순환도로",     lat: 37.4813, lng: 126.9527, bearing: 250 },
+      { name: "충무빌딩",            desc: "중구 퇴계로 · 명동역 방면",           lat: 37.5605, lng: 126.9840, bearing: 95 },
+      { name: "동아빌딩",            desc: "강서구 · 공항대로 인근",             lat: 37.5610, lng: 126.8070, bearing: 95 },
+      { name: "우신빌딩",            desc: "강남대로 · 강남역 방면",             lat: 37.5018, lng: 127.0252, bearing: 135 },
+      { name: "산광빌딩",            desc: "동작구 · 사당역 사거리 인근",          lat: 37.4762, lng: 126.9818, bearing: 185 },
+      { name: "신촌빌딩",            desc: "신촌역 · 주요 대학 인근",            lat: 37.5552, lng: 126.9368, bearing: 180 }
+    ];
+
+    var DEFAULT_SPREAD = 22;   // 부채꼴 반각(도)
+    var WEDGE_RADIUS = 320;    // 부채꼴 길이(m)
+
+    /* 방위각 → 8방위 한글 라벨 */
+    function bearingLabel(b) {
+      var dirs = ["북", "북동", "동", "남동", "남", "남서", "서", "북서"];
+      var idx = Math.round(((b % 360) / 45)) % 8;
+      return dirs[idx];
+    }
+
+    /* 시작점에서 방위각/거리만큼 떨어진 좌표 계산 */
+    function destPoint(lat, lng, bearingDeg, distM) {
+      var R = 6378137;
+      var br = bearingDeg * Math.PI / 180;
+      var lat1 = lat * Math.PI / 180;
+      var lng1 = lng * Math.PI / 180;
+      var dr = distM / R;
+      var lat2 = Math.asin(Math.sin(lat1) * Math.cos(dr) +
+                 Math.cos(lat1) * Math.sin(dr) * Math.cos(br));
+      var lng2 = lng1 + Math.atan2(Math.sin(br) * Math.sin(dr) * Math.cos(lat1),
+                 Math.cos(dr) - Math.sin(lat1) * Math.sin(lat2));
+      return { lat: lat2 * 180 / Math.PI, lng: lng2 * 180 / Math.PI };
+    }
+
+    /* 부채꼴 폴리곤 좌표 배열 */
+    function wedgePath(s) {
+      var spread = (s.spread == null) ? DEFAULT_SPREAD : s.spread;
+      var pts = [ new naver.maps.LatLng(s.lat, s.lng) ];
+      var start = s.bearing - spread, end = s.bearing + spread, step = 6;
+      for (var a = start; a <= end + 0.001; a += step) {
+        var p = destPoint(s.lat, s.lng, a, WEDGE_RADIUS);
+        pts.push(new naver.maps.LatLng(p.lat, p.lng));
+      }
+      pts.push(new naver.maps.LatLng(s.lat, s.lng));
+      return pts;
+    }
+
+    function start() {
+      var css = getComputedStyle(document.documentElement);
+      var brand = css.getPropertyValue('--brand').trim() || '#6c3df4';
+      var fill = css.getPropertyValue('--brand-soft').trim() || 'rgba(108,61,244,0.20)';
+      var line = css.getPropertyValue('--brand-line').trim() || 'rgba(108,61,244,0.85)';
+
+      var bounds = new naver.maps.LatLngBounds(
+        new naver.maps.LatLng(SCREENS[0].lat, SCREENS[0].lng),
+        new naver.maps.LatLng(SCREENS[0].lat, SCREENS[0].lng)
+      );
+      SCREENS.forEach(function (s) { bounds.extend(new naver.maps.LatLng(s.lat, s.lng)); });
+
+      var map = new naver.maps.Map('map', {
+        center: bounds.getCenter(),
+        zoom: 11,
+        zoomControl: true,
+        zoomControlOptions: { position: naver.maps.Position.TOP_RIGHT }
+      });
+      map.fitBounds(bounds);
+
+      var infoWindow = new naver.maps.InfoWindow({ borderWidth: 0, backgroundColor: '#fff', anchorSize: new naver.maps.Size(10, 10) });
+      var markers = [], wedges = [];
+      var listEl = document.getElementById('list');
+
+      SCREENS.forEach(function (s, i) {
+        // 부채꼴
+        var poly = new naver.maps.Polygon({
+          map: map,
+          paths: [ wedgePath(s) ],
+          fillColor: brand, fillOpacity: 0.20,
+          strokeColor: line, strokeOpacity: 0.9, strokeWeight: 1.5
+        });
+        wedges.push(poly);
+
+        // 마커
+        var marker = new naver.maps.Marker({
+          map: map,
+          position: new naver.maps.LatLng(s.lat, s.lng),
+          title: s.name,
+          icon: {
+            content: '<div style="transform:translate(-50%,-50%);width:14px;height:14px;border-radius:50%;background:' +
+                     brand + ';border:2.5px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.35)"></div>',
+            anchor: new naver.maps.Point(0, 0)
+          }
+        });
+        markers.push(marker);
+
+        function focus() {
+          map.morph(new naver.maps.LatLng(s.lat, s.lng), 15);
+          infoWindow.setContent(
+            '<div class="iw"><div class="t">' + s.name + '</div>' +
+            '<div class="d">' + s.desc + '</div>' +
+            '<div class="dir">▶ 바라보는 방향: ' + bearingLabel(s.bearing) + ' (' + s.bearing + '°)</div></div>'
+          );
+          infoWindow.open(map, marker);
+          [].forEach.call(document.querySelectorAll('.item'), function (el) { el.classList.remove('active'); });
+          var li = document.getElementById('item-' + i);
+          if (li) li.classList.add('active');
+        }
+
+        naver.maps.Event.addListener(marker, 'click', focus);
+
+        // 목록 항목
+        var li = document.createElement('div');
+        li.className = 'item';
+        li.id = 'item-' + i;
+        li.innerHTML = '<div class="name">' + s.name + '</div><div class="desc">' + s.desc +
+                       ' · 바라보는 방향 ' + bearingLabel(s.bearing) + '</div>';
+        li.addEventListener('click', focus);
+        listEl.appendChild(li);
+      });
+    }
+
+    /* 인증 실패 감지 */
+    window.navermap_authFailure = function () {
+      document.getElementById('authError').style.display = 'flex';
+    };
+
+    var started = false;
+    function startOnce() { if (!started) { started = true; start(); } }
+
+    if (window.naver && window.naver.maps && naver.maps.Map) {
+      startOnce();
+    } else if (window.naver && window.naver.maps) {
+      naver.maps.onJSContentLoaded = startOnce;
+    } else {
+      document.getElementById('authError').style.display = 'flex';
+    }
+  </script>
+</body>
+</html>
